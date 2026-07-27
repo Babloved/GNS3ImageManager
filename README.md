@@ -3,9 +3,6 @@
 Удобный графический менеджер образов для GNS3 с интеграцией API.  
 Позволяет просматривать, добавлять, удалять образы QEMU, создавать шаблоны виртуальных машин со всеми параметрами, а также автоматически очищать неиспользуемые файлы и «осиротевшие» шаблоны.
 
-<img width="1200" height="782" alt="image" src="https://github.com/user-attachments/assets/8781af7f-47fb-41a5-8d40-88f9c302c826" />
-<img width="900" height="682" alt="image" src="https://github.com/user-attachments/assets/d6327a25-e2fc-4977-94df-386da54d09da" />
-<img width="935" height="932" alt="image" src="https://github.com/user-attachments/assets/dce74f57-7389-4b7f-a6c4-ded71c0afff5" />
 ## Основные возможности
 
 - 📁 **Просмотр образов** – таблица с файлами в папке `~/GNS3/images/QEMU`. Показывает имя, размер и дату изменения. Поддерживает сортировку по любому столбцу.
