@@ -3,6 +3,7 @@
 GNS3 Image Manager — управление образами QEMU с GUI и интеграцией с API GNS3.
 Возможности:
 - просмотр, добавление, удаление образов
+- большой диалог выбора файлов (с фильтрацией по образам)
 - создание шаблонов QEMU (расширенные настройки: символ, категория, интерфейсы дисков)
 - настройка папки по умолчанию для импорта образов
 - linked clone включён по умолчанию
@@ -10,6 +11,7 @@ GNS3 Image Manager — управление образами QEMU с GUI и ин
 - удаление образов, не привязанных ни к одному шаблону
 - удаление шаблонов с отсутствующими образами
 - тёмная тема, сортировка столбцов, индикатор состояния API
+- иконка приложения (если упакован PyInstaller)
 
 Требования: Python 3.6+, pip install requests send2trash (send2trash опционально)
 """
@@ -20,7 +22,7 @@ import json
 import re
 import shutil
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from pathlib import Path
 from datetime import datetime
 import requests
@@ -30,7 +32,6 @@ from requests.auth import HTTPBasicAuth
 TARGET_DIR = Path.home() / "GNS3/images/QEMU"
 IMAGE_EXTENSIONS = {".qcow2", ".img", ".vmdk", ".qcow", ".raw", ".vdi", ".vhd", ".vhdx"}
 CONFIG_FILE = Path.home() / ".gns3_image_manager_config.json"
-
 DEFAULT_IMPORT_DIR = str(Path.home() / "Downloads") if (Path.home() / "Downloads").exists() else str(Path.home())
 
 DEFAULT_CONFIG = {
@@ -47,7 +48,7 @@ DEFAULT_CONFIG = {
     "platform": "x86_64",
     "options": "",
     "default_symbol": ":/symbols/classic/qemu_guest.svg",
-    "default_category": "routers",
+    "default_category": "router",                # разрешённая категория
     "import_dir": DEFAULT_IMPORT_DIR,
     "linked_clone": True,
     "hda_disk_interface": "sata",
@@ -124,8 +125,8 @@ class ConfirmDeleteDialog(tk.Toplevel):
     def __init__(self, parent, files_to_delete, templates_to_delete, nodes_count):
         super().__init__(parent)
         self.title("Подтверждение удаления")
-        self.geometry("750x500")
-        self.minsize(500, 300)
+        self.geometry("800x550")                     # увеличен
+        self.minsize(600, 400)
         self.resizable(True, True)
         self.result = False
 
@@ -167,15 +168,132 @@ class ConfirmDeleteDialog(tk.Toplevel):
         self.result = True
         self.destroy()
 
-# -------------------- Диалог настроек (с интерфейсами дисков) --------------------
+# -------------------- Кастомный диалог выбора файла (увеличен) --------------------
+class FileSelectorDialog(tk.Toplevel):
+    def __init__(self, parent, initial_dir, title="Выберите файл"):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("900x650")                     # увеличен
+        self.minsize(700, 500)
+        self.result = None
+        self.current_dir = Path(initial_dir) if initial_dir and Path(initial_dir).exists() else Path.home()
+
+        # Панель навигации
+        nav_frame = ttk.Frame(self)
+        nav_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(nav_frame, text="Вверх", command=self._go_up).pack(side=tk.LEFT, padx=5)
+        self.dir_var = tk.StringVar(value=str(self.current_dir))
+        ttk.Entry(nav_frame, textvariable=self.dir_var, width=60).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        ttk.Button(nav_frame, text="Перейти", command=self._browse_to).pack(side=tk.LEFT, padx=5)
+
+        # Список файлов/папок
+        list_frame = ttk.Frame(self)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        columns = ("name", "size", "type")
+        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode=tk.BROWSE)
+        self.tree.heading("name", text="Имя")
+        self.tree.heading("size", text="Размер")
+        self.tree.heading("type", text="Тип")
+        self.tree.column("name", width=450)
+        self.tree.column("size", width=120, anchor=tk.CENTER)
+        self.tree.column("type", width=100, anchor=tk.CENTER)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.tree.bind("<Double-1>", self._on_double_click)
+
+        # Кнопки
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=5, padx=10, fill=tk.X)
+        ttk.Button(btn_frame, text="Выбрать", command=self._on_select).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=self.destroy).pack(side=tk.RIGHT, padx=5)
+
+        self._refresh_list()
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _refresh_list(self):
+        self.tree.delete(*self.tree.get_children())
+        try:
+            entries = list(self.current_dir.iterdir())
+        except PermissionError:
+            return
+        dirs = []
+        files = []
+        for entry in entries:
+            if entry.is_dir():
+                dirs.append((entry.name, "", "<Каталог>", entry))
+            else:
+                if entry.suffix.lower() in IMAGE_EXTENSIONS:
+                    size = entry.stat().st_size
+                    size_str = f"{size/1024/1024:.1f} МБ" if size > 1024*1024 else f"{size/1024:.1f} КБ"
+                    files.append((entry.name, size_str, entry.suffix.upper(), entry))
+        dirs.sort(key=lambda x: x[0].lower())
+        files.sort(key=lambda x: x[0].lower())
+        for item in dirs + files:
+            self.tree.insert("", tk.END, values=item[:3], tags=("dir" if item[2]=="<Каталог>" else "file",))
+
+    def _on_double_click(self, event):
+        item = self.tree.focus()
+        if not item:
+            return
+        values = self.tree.item(item, "values")
+        if not values:
+            return
+        name = values[0]
+        full_path = self.current_dir / name
+        if full_path.is_dir():
+            self.current_dir = full_path
+            self.dir_var.set(str(self.current_dir))
+            self._refresh_list()
+        else:
+            self.result = str(full_path)
+            self.destroy()
+
+    def _on_select(self):
+        item = self.tree.focus()
+        if not item:
+            return
+        values = self.tree.item(item, "values")
+        if not values:
+            return
+        name = values[0]
+        full_path = self.current_dir / name
+        if full_path.is_dir():
+            self.current_dir = full_path
+            self.dir_var.set(str(self.current_dir))
+            self._refresh_list()
+        else:
+            self.result = str(full_path)
+            self.destroy()
+
+    def _go_up(self):
+        self.current_dir = self.current_dir.parent
+        self.dir_var.set(str(self.current_dir))
+        self._refresh_list()
+
+    def _browse_to(self):
+        new_path = Path(self.dir_var.get())
+        if new_path.exists() and new_path.is_dir():
+            self.current_dir = new_path
+            self._refresh_list()
+        else:
+            messagebox.showerror("Ошибка", "Папка не существует", parent=self)
+
+# -------------------- Диалог настроек (с прокруткой, категории исправлены) --------------------
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, config, callback):
         super().__init__(parent)
         self.config = config
         self.callback = callback
         self.title("Настройки GNS3")
-        self.geometry("550x750")   # чуть выше из-за новых полей
-        self.minsize(480, 650)
+        self.geometry("600x700")                     # увеличен
+        self.minsize(500, 600)
 
         canvas = tk.Canvas(self, bg='#2e2e2e', highlightthickness=0)
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=canvas.yview)
@@ -256,9 +374,10 @@ class SettingsDialog(tk.Toplevel):
         ttk.Entry(main_frame, textvariable=self.symbol_var, width=30).grid(row=row, column=1, padx=5, pady=5, sticky="ew")
         row += 1
 
+        # ---------- КАТЕГОРИЯ ИСПРАВЛЕНА ----------
         ttk.Label(main_frame, text="Категория по умолчанию:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
-        self.category_var = tk.StringVar(value=config.get("default_category", "routers"))
-        categories = ["routers", "switches", "end devices", "security devices"]
+        self.category_var = tk.StringVar(value=config.get("default_category", "router"))
+        categories = ["router", "switch", "guest", "firewall"]   # <-- только эти
         ttk.Combobox(main_frame, textvariable=self.category_var, values=categories, width=18).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         row += 1
 
@@ -270,7 +389,6 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(import_frame, text="Обзор", command=self._browse_import_dir).pack(side=tk.LEFT, padx=5)
         row += 1
 
-        # Интерфейсы дисков по умолчанию
         ttk.Label(main_frame, text="Интерфейс HDA по умолч.:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
         self.hda_iface_var = tk.StringVar(value=config.get("hda_disk_interface", "sata"))
         ifaces = ["ide", "sata", "scsi", "virtio", "none"]
@@ -282,7 +400,6 @@ class SettingsDialog(tk.Toplevel):
         ttk.Combobox(main_frame, textvariable=self.hdb_iface_var, values=ifaces, state="readonly", width=10).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         row += 1
 
-        # Linked clone по умолчанию
         self.linked_clone_var = tk.BooleanVar(value=config.get("linked_clone", True))
         ttk.Checkbutton(main_frame, variable=self.linked_clone_var).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         ttk.Label(main_frame, text="Linked base по умолчанию:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
@@ -295,6 +412,7 @@ class SettingsDialog(tk.Toplevel):
         main_frame.columnconfigure(1, weight=1)
 
     def _browse_import_dir(self):
+        from tkinter import filedialog
         path = filedialog.askdirectory(title="Выберите папку для импорта образов")
         if path:
             self.import_dir_var.set(path)
@@ -312,7 +430,7 @@ class SettingsDialog(tk.Toplevel):
         self.config["console_type"] = self.console_var.get()
         self.config["platform"] = self.platform_var.get()
         self.config["default_symbol"] = self.symbol_var.get()
-        self.config["default_category"] = self.category_var.get()
+        self.config["default_category"] = self.category_var.get()   # сохраняем новую категорию
         self.config["import_dir"] = self.import_dir_var.get()
         self.config["hda_disk_interface"] = self.hda_iface_var.get()
         self.config["hdb_disk_interface"] = self.hdb_iface_var.get()
@@ -321,7 +439,7 @@ class SettingsDialog(tk.Toplevel):
         self.callback()
         self.destroy()
 
-# -------------------- Диалог создания шаблона (с интерфейсами дисков) --------------------
+# -------------------- Диалог создания шаблона (увеличен, категории исправлены) --------------------
 class CreateTemplateDialog(tk.Toplevel):
     def __init__(self, parent, image_path, config):
         super().__init__(parent)
@@ -329,9 +447,9 @@ class CreateTemplateDialog(tk.Toplevel):
         self.config = config
         self.result = None
         self.title("Создать шаблон QEMU в GNS3")
-        self.geometry("620x600")   # немного выше
+        self.geometry("700x600")                     # увеличен
         self.resizable(True, True)
-        self.minsize(520, 500)
+        self.minsize(600, 500)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -375,9 +493,10 @@ class CreateTemplateDialog(tk.Toplevel):
         ttk.Label(frame, text="Символ (SVG):").grid(row=r, column=0, sticky="w", padx=5, pady=5)
         self.symbol_var = tk.StringVar(value=self.config.get("default_symbol", ""))
         ttk.Entry(frame, textvariable=self.symbol_var, width=35).grid(row=r, column=1, padx=5, pady=5, sticky="ew"); r += 1
+        # ---------- КАТЕГОРИЯ ИСПРАВЛЕНА ----------
         ttk.Label(frame, text="Категория:").grid(row=r, column=0, sticky="w", padx=5, pady=5)
-        self.category_var = tk.StringVar(value=self.config.get("default_category", ""))
-        ttk.Combobox(frame, textvariable=self.category_var, values=["routers", "switches", "end devices", "security devices"], width=20).grid(row=r, column=1, sticky="w", padx=5, pady=5)
+        self.category_var = tk.StringVar(value=self.config.get("default_category", "router"))
+        ttk.Combobox(frame, textvariable=self.category_var, values=["router", "switch", "guest", "firewall"], width=20).grid(row=r, column=1, sticky="w", padx=5, pady=5)
         frame.columnconfigure(1, weight=1)
 
     def _create_disks_tab(self, parent):
@@ -405,7 +524,6 @@ class CreateTemplateDialog(tk.Toplevel):
         self.cdrom_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.cdrom_var, width=30).grid(row=r, column=1, padx=5, pady=5, sticky="ew")
         ttk.Button(frame, text="Обзор", command=lambda: self._browse_file(self.cdrom_var)).grid(row=r, column=2, padx=5)
-        # интерфейс CDROM обычно не указывается отдельно, пропускаем
         r += 1
 
         ttk.Label(frame, text="* Пути могут быть абсолютными или относительными (от images/QEMU)").grid(row=r, column=0, columnspan=4, sticky="w", padx=5, pady=10)
@@ -413,8 +531,10 @@ class CreateTemplateDialog(tk.Toplevel):
 
     def _browse_file(self, stringvar):
         initial = self.config.get("import_dir", DEFAULT_IMPORT_DIR)
-        path = filedialog.askopenfilename(title="Выберите файл", initialdir=initial)
-        if path: stringvar.set(path)
+        dlg = FileSelectorDialog(self, initial_dir=initial, title="Выберите файл")
+        self.wait_window(dlg)
+        if dlg.result:
+            stringvar.set(dlg.result)
 
     def _create_network_tab(self, parent):
         frame = ttk.Frame(parent, padding=10)
@@ -461,13 +581,13 @@ class CreateTemplateDialog(tk.Toplevel):
         }
         self.destroy()
 
-# -------------------- Главное окно --------------------
+# -------------------- Главное окно (увеличено) --------------------
 class GNS3ImageManager:
     def __init__(self, root):
         self.root = root
         self.root.title("GNS3 Image Manager")
-        self.root.geometry("1100x700")
-        self.root.minsize(850, 500)
+        self.root.geometry("1200x750")               # увеличен
+        self.root.minsize(900, 550)
         self.config = load_config()
         self.sort_column = "name"
         self.sort_reverse = False
@@ -497,7 +617,8 @@ class GNS3ImageManager:
         self.tree.heading("name", text="Имя файла", command=lambda: self.sort_by_column("name"))
         self.tree.heading("size", text="Размер (МБ)", command=lambda: self.sort_by_column("size"))
         self.tree.heading("modified", text="Изменён", command=lambda: self.sort_by_column("modified"))
-        self.tree.column("name", width=500); self.tree.column("size", width=120, anchor=tk.CENTER)
+        self.tree.column("name", width=600)
+        self.tree.column("size", width=120, anchor=tk.CENTER)
         self.tree.column("modified", width=160, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -537,10 +658,11 @@ class GNS3ImageManager:
 
     def add_image(self):
         initial_dir = self.config.get("import_dir", DEFAULT_IMPORT_DIR)
-        filepath = filedialog.askopenfilename(title="Выберите образ для добавления",
-            filetypes=[("Образы дисков", "*.qcow2 *.img *.vmdk *.qcow *.raw *.vdi *.vhd *.vhdx"), ("Все файлы", "*.*")],
-            initialdir=initial_dir)
-        if not filepath: return
+        dlg = FileSelectorDialog(self.root, initial_dir=initial_dir, title="Выберите образ для добавления")
+        self.root.wait_window(dlg)
+        if not dlg.result:
+            return
+        filepath = dlg.result
         src = Path(filepath)
         if not src.is_file(): messagebox.showerror("Ошибка", "Файл не существует."); return
         dest = TARGET_DIR / src.name
