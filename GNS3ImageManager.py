@@ -17,6 +17,7 @@ GNS3 Image Manager — управление образами QEMU с GUI и ин
 - все окна открываются на весь экран
 - удобное копирование текста ошибок
 - загрузка настроек из существующего ISO при создании нового (исправлено)
+- ПОДДЕРЖКА ZIP-АРХИВОВ: автоматическая распаковка образов из ZIP при добавлении
 
 Требования: Python 3.6+, pip install requests send2trash pycdlib (send2trash опционально)
            Для создания ISO требуется установленный mkisofs (genisoimage) в PATH.
@@ -34,6 +35,7 @@ from tkinter import ttk, messagebox
 from pathlib import Path
 from datetime import datetime
 from io import BytesIO
+import zipfile  # <--- ДОБАВЛЕНО для работы с ZIP
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -251,6 +253,46 @@ def _read_iso_with_pycdlib(iso_path):
     iso.close()
     return result
 
+# ==================== ДОБАВЛЕНО: Распаковка ZIP ====================
+def extract_images_from_zip(zip_path, dest_dir):
+    """
+    Извлекает из ZIP-архива все файлы с расширениями из IMAGE_EXTENSIONS
+    в папку dest_dir. Возвращает список путей к извлечённым файлам.
+    При конфликте имён добавляет суффикс (1), (2) и т.д.
+    """
+    extracted = []
+    if not zipfile.is_zipfile(zip_path):
+        raise ValueError("Файл не является ZIP-архивом")
+
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        # Получаем список всех файлов в архиве (включая пути)
+        for info in zf.infolist():
+            # Пропускаем каталоги
+            if info.is_dir():
+                continue
+            # Проверяем расширение
+            ext = os.path.splitext(info.filename)[1].lower()
+            if ext not in IMAGE_EXTENSIONS:
+                continue
+
+            # Извлекаем имя файла без пути
+            fname = os.path.basename(info.filename)
+            # Проверяем конфликт имён
+            target_path = dest_dir / fname
+            counter = 1
+            while target_path.exists():
+                base, ext2 = os.path.splitext(fname)
+                new_name = f"{base}_{counter}{ext2}"
+                target_path = dest_dir / new_name
+                counter += 1
+
+            # Извлекаем файл в dest_dir с новым именем
+            with zf.open(info) as src, open(target_path, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+            extracted.append(target_path)
+
+    return extracted
+
 # -------------------- Тёмная тема --------------------
 def set_dark_theme(root):
     style = ttk.Style()
@@ -407,36 +449,46 @@ class ConfirmDeleteDialog(tk.Toplevel):
         self.result = True
         self.destroy()
 
-# -------------------- Кастомный диалог выбора файла --------------------
+# -------------------- Кастомный диалог выбора файла (изменён для поддержки всех файлов) --------------------
 class FileSelectorDialog(tk.Toplevel):
     def __init__(self, parent, initial_dir, title="Выберите файл", extensions=None):
+        """
+        extensions: набор расширений для фильтрации (например, {'.qcow2', '.img'}).
+                    Если None — показывать все файлы.
+        """
         super().__init__(parent)
         self.title(title)
-        self.geometry("900x650")
+        self.geometry("950x700")
         self.minsize(700, 500)
         self.result = None
         self.current_dir = Path(initial_dir) if initial_dir and Path(initial_dir).exists() else Path.home()
-        self.extensions = set(extensions) if extensions is not None else IMAGE_EXTENSIONS
+        self.extensions = set(extensions) if extensions is not None else None
+        self.sort_col = "name"      # текущая колонка сортировки
+        self.sort_reverse = False
 
+        # --- навигация ---
         nav_frame = ttk.Frame(self)
         nav_frame.pack(fill=tk.X, padx=10, pady=5)
-
         ttk.Button(nav_frame, text="Вверх", command=self._go_up).pack(side=tk.LEFT, padx=5)
         self.dir_var = tk.StringVar(value=str(self.current_dir))
         ttk.Entry(nav_frame, textvariable=self.dir_var, width=60).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         ttk.Button(nav_frame, text="Перейти", command=self._browse_to).pack(side=tk.LEFT, padx=5)
 
+        # --- таблица ---
         list_frame = ttk.Frame(self)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        columns = ("name", "size", "type")
+        columns = ("name", "size", "type", "modified")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode=tk.BROWSE)
-        self.tree.heading("name", text="Имя")
-        self.tree.heading("size", text="Размер")
-        self.tree.heading("type", text="Тип")
-        self.tree.column("name", width=450)
-        self.tree.column("size", width=120, anchor=tk.CENTER)
-        self.tree.column("type", width=100, anchor=tk.CENTER)
+        self.tree.heading("name", text="Имя", command=lambda: self._sort_by("name"))
+        self.tree.heading("size", text="Размер", command=lambda: self._sort_by("size"))
+        self.tree.heading("type", text="Тип", command=lambda: self._sort_by("type"))
+        self.tree.heading("modified", text="Дата изменения", command=lambda: self._sort_by("modified"))
+
+        self.tree.column("name", width=350)
+        self.tree.column("size", width=100, anchor=tk.CENTER)
+        self.tree.column("type", width=80, anchor=tk.CENTER)
+        self.tree.column("modified", width=150, anchor=tk.CENTER)
 
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -445,6 +497,7 @@ class FileSelectorDialog(tk.Toplevel):
 
         self.tree.bind("<Double-1>", self._on_double_click)
 
+        # --- кнопки ---
         btn_frame = ttk.Frame(self)
         btn_frame.pack(pady=5, padx=10, fill=tk.X)
         ttk.Button(btn_frame, text="Выбрать", command=self._on_select).pack(side=tk.RIGHT, padx=5)
@@ -461,20 +514,53 @@ class FileSelectorDialog(tk.Toplevel):
             entries = list(self.current_dir.iterdir())
         except PermissionError:
             return
+
         dirs = []
         files = []
         for entry in entries:
             if entry.is_dir():
-                dirs.append((entry.name, "", "<Каталог>", entry))
+                dirs.append((entry.name, "", "<Каталог>", "", entry))
             else:
-                if entry.suffix.lower() in self.extensions:
-                    size = entry.stat().st_size
-                    size_str = f"{size/1024/1024:.1f} МБ" if size > 1024*1024 else f"{size/1024:.1f} КБ"
-                    files.append((entry.name, size_str, entry.suffix.upper(), entry))
+                if self.extensions is not None and entry.suffix.lower() not in self.extensions:
+                    continue
+                stat = entry.stat()
+                size = stat.st_size
+                size_str = f"{size/1024/1024:.1f} МБ" if size > 1024*1024 else f"{size/1024:.1f} КБ"
+                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                files.append((entry.name, size_str, entry.suffix.upper(), mtime, entry))
+
+        # Сортируем каталоги и файлы отдельно (каталоги всегда сверху)
         dirs.sort(key=lambda x: x[0].lower())
         files.sort(key=lambda x: x[0].lower())
-        for item in dirs + files:
-            self.tree.insert("", tk.END, values=item[:3], tags=("dir" if item[2]=="<Каталог>" else "file",))
+
+        # Применяем сортировку по выбранной колонке (только для файлов, каталоги остаются сверху)
+        if self.sort_col != "name":  # сортировка по другим колонкам применяется к файлам
+            if self.sort_col == "size":
+                # размер в байтах для сортировки (извлекаем из записи)
+                files.sort(key=lambda x: x[4].stat().st_size, reverse=self.sort_reverse)
+            elif self.sort_col == "type":
+                files.sort(key=lambda x: x[2].lower(), reverse=self.sort_reverse)
+            elif self.sort_col == "modified":
+                files.sort(key=lambda x: x[3], reverse=self.sort_reverse)
+        else:
+            # по имени уже отсортированы, но если reverse, то инвертируем
+            if self.sort_reverse:
+                files.reverse()
+
+        # Вставляем каталоги, затем файлы
+        for item in dirs:
+            self.tree.insert("", tk.END, values=item[:4], tags=("dir",))
+        for item in files:
+            self.tree.insert("", tk.END, values=item[:4], tags=("file",))
+
+    def _sort_by(self, col):
+        if self.sort_col == col:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_col = col
+            self.sort_reverse = False
+        self._refresh_list()
+
 
     def _on_double_click(self, event):
         item = self.tree.focus()
@@ -682,38 +768,51 @@ class SettingsDialog(tk.Toplevel):
 
 # -------------------- Диалог редактора конфигурационного ISO (с загрузкой из ISO) --------------------
 class ConfigISOEditorDialog(tk.Toplevel):
-    def __init__(self, parent, config, iso_type=None):
+    def __init__(self, parent, config, iso_path=None):
+        """
+        iso_path: если указан, открывает редактор для редактирования этого ISO
+        """
         super().__init__(parent)
         self.config = config
-        self.result_path = None
-        self.title("Создание конфигурационного ISO")
+        self.editing_iso_path = iso_path   # путь к редактируемому ISO, если есть
+        self.result_path = None            # путь к сохранённому ISO (для обновления списка)
+
+        title = "Редактирование конфигурационного ISO" if iso_path else "Создание конфигурационного ISO"
+        self.title(title)
         self.geometry("800x650")
         self.minsize(600, 450)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # ---------- Вкладка "Общие" ----------
         common_frame = ttk.Frame(notebook, padding=10)
         notebook.add(common_frame, text="Общие")
+
         row = 0
         ttk.Label(common_frame, text="Тип устройства:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
         self.types = [("NGFW nocloud", "ngfw"), ("Cisco config", "cisco"), ("MikroTik script", "mikrotik")]
         self.type_var = tk.StringVar(value=self.types[0][0])
-        ttk.Combobox(common_frame, textvariable=self.type_var, values=[t[0] for t in self.types], state="readonly", width=20).grid(row=row, column=1, sticky="w", padx=5, pady=5)
+        ttk.Combobox(common_frame, textvariable=self.type_var, values=[t[0] for t in self.types],
+                     state="readonly", width=20).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         self.type_var.trace("w", lambda *a: self._switch_type())
         row += 1
+
         ttk.Label(common_frame, text="Имя ISO файла:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
         self.iso_name_var = tk.StringVar(value="config.iso")
         ttk.Entry(common_frame, textvariable=self.iso_name_var, width=30).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         row += 1
+
         ttk.Label(common_frame, text="Папка сохранения:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
         self.dir_var = tk.StringVar(value=str(CONFIG_ISO_DIR))
         ttk.Entry(common_frame, textvariable=self.dir_var, width=30).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         row += 1
-        # Кнопка загрузки из ISO
+
+        # Кнопка загрузки из ISO (для ручного открытия другого файла)
         load_btn = ttk.Button(common_frame, text="Загрузить из ISO...", command=self._load_from_iso)
         load_btn.grid(row=row, column=0, columnspan=2, pady=10)
 
+        # ---------- Вкладка "Содержимое" ----------
         self.content_notebook = ttk.Notebook(notebook)
         notebook.add(self.content_notebook, text="Содержимое")
 
@@ -727,47 +826,67 @@ class ConfigISOEditorDialog(tk.Toplevel):
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
+        # ---------- Кнопки внизу ----------
         btn_frame = ttk.Frame(self)
         btn_frame.pack(pady=(0, 10))
-        ttk.Button(btn_frame, text="Создать ISO", command=self.create_iso).pack(side=tk.LEFT, padx=10)
+
+        if self.editing_iso_path:
+            # Кнопка "Сохранить" — перезаписать исходный файл
+            self.save_btn = ttk.Button(btn_frame, text="Сохранить (перезаписать)", command=self._save_existing)
+            self.save_btn.pack(side=tk.LEFT, padx=10)
+
+        self.create_btn = ttk.Button(btn_frame, text="Создать ISO", command=self._create_new)
+        self.create_btn.pack(side=tk.LEFT, padx=10)
+
         ttk.Button(btn_frame, text="Отмена", command=self.destroy).pack(side=tk.LEFT, padx=10)
+
+        # Если передан путь — загружаем его содержимое
+        if iso_path:
+            self._load_from_path(iso_path)
+            self.iso_name_var.set(Path(iso_path).name)
 
         maximize_window(self)
 
+    # ---------- Вспомогательные методы ----------
     def _build_content_tabs(self):
+        """Строит вкладки в зависимости от текущего типа."""
         for child in self.content_notebook.winfo_children():
             child.destroy()
+
         if self.type_var.get().startswith("NGFW"):
+            # user-data
             tab_user = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_user, text="user-data")
-            lbl = ttk.Label(tab_user, text="user-data (YAML):", font=("", 9, "bold"))
-            lbl.pack(anchor="w")
+            ttk.Label(tab_user, text="user-data (YAML):", font=("", 9, "bold")).pack(anchor="w")
             self.user_data_text = tk.Text(tab_user, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
             self.user_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.user_data_text.insert("1.0", "#cloud-config\npassword: admin\nchpasswd: { expire: False }\nssh_pwauth: true\n")
 
+            # meta-data
             tab_meta = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_meta, text="meta-data")
-            lbl2 = ttk.Label(tab_meta, text="meta-data:", font=("", 9, "bold"))
-            lbl2.pack(anchor="w")
+            ttk.Label(tab_meta, text="meta-data:", font=("", 9, "bold")).pack(anchor="w")
             self.meta_data_text = tk.Text(tab_meta, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white", height=5)
             self.meta_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.meta_data_text.insert("1.0", "instance-id: i-ngfw\nlocal-hostname: ngfw\n")
 
+            # vendor-data
             tab_vendor = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_vendor, text="vendor-data")
-            lbl3 = ttk.Label(tab_vendor, text="vendor-data (опционально):", font=("", 9, "bold"))
-            lbl3.pack(anchor="w")
+            ttk.Label(tab_vendor, text="vendor-data (опционально):", font=("", 9, "bold")).pack(anchor="w")
             self.vendor_data_text = tk.Text(tab_vendor, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
             self.vendor_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.vendor_data_text.insert("1.0", "")
         else:
+            # Обычный конфигурационный файл
             tab_file = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_file, text="Конфигурационный файл")
+
             frame_name = ttk.Frame(tab_file)
             frame_name.pack(fill=tk.X, pady=5)
             ttk.Label(frame_name, text="Имя файла внутри ISO:").pack(side=tk.LEFT)
             ttk.Entry(frame_name, textvariable=self.config_file_name_var, width=30).pack(side=tk.LEFT, padx=5)
+
             self.config_text = tk.Text(tab_file, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
             self.config_text.pack(fill=tk.BOTH, expand=True, pady=5)
             if self.type_var.get().startswith("Cisco"):
@@ -778,20 +897,15 @@ class ConfigISOEditorDialog(tk.Toplevel):
     def _switch_type(self):
         self._build_content_tabs()
 
-    def _load_from_iso(self):
-        """Загружает содержимое из существующего ISO и заполняет поля редактора."""
-        dlg = FileSelectorDialog(self, initial_dir=str(CONFIG_ISO_DIR), title="Выберите ISO для загрузки", extensions=['.iso'])
-        self.wait_window(dlg)
-        if not dlg.result:
-            return
-        iso_path = dlg.result
+    def _load_from_path(self, path):
+        """Загружает содержимое ISO из указанного пути и заполняет поля."""
         try:
-            content_dict = read_iso_content(iso_path)
+            content_dict = read_iso_content(path)
         except Exception as e:
             ErrorDialog(self, "Ошибка чтения ISO", str(e))
             return
 
-        # Проверяем, является ли ISO nocloud
+        # Проверяем nocloud
         if 'user-data' in content_dict and 'meta-data' in content_dict:
             self.type_var.set("NGFW nocloud")
             self._switch_type()
@@ -805,13 +919,14 @@ class ConfigISOEditorDialog(tk.Toplevel):
                 self.vendor_data_text.delete("1.0", tk.END)
                 self.vendor_data_text.insert("1.0", content_dict.get('vendor-data', ''))
         else:
-            # Generic ISO: выбираем первый файл
+            # Generic ISO: берём первый файл
             files = [f for f in content_dict.keys() if f not in ('.', '..')]
             if not files:
                 ErrorDialog(self, "Ошибка", "В ISO не найдено файлов с данными.")
                 return
             chosen = files[0]
             data = content_dict[chosen]
+            # Автоопределение типа
             if 'hostname' in data.lower() or 'interface' in data.lower():
                 self.type_var.set("Cisco config")
             elif '/system' in data.lower() or 'identity' in data.lower():
@@ -824,12 +939,56 @@ class ConfigISOEditorDialog(tk.Toplevel):
                 self.config_text.insert("1.0", data)
             self.config_file_name_var.set(chosen)
 
-        messagebox.showinfo("Готово", f"Данные загружены из {Path(iso_path).name}")
-        self.deiconify()      # если окно было свернуто, разворачиваем
-        self.lift()           # поднимаем на передний план
-        self.focus_force()    # принудительно устанавливаем фокус
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
-    def create_iso(self):
+    def _load_from_iso(self):
+        """Загружает из другого ISO (кнопка)."""
+        dlg = FileSelectorDialog(self, initial_dir=str(CONFIG_ISO_DIR),
+                                 title="Выберите ISO для загрузки", extensions=['.iso'])
+        self.wait_window(dlg)
+        if dlg.result:
+            self._load_from_path(dlg.result)
+            self.iso_name_var.set(Path(dlg.result).name)
+
+    def _save_to_path(self, output_path):
+        """Сохраняет текущее содержимое в указанный путь (создаёт ISO)."""
+        # Проверка mkisofs
+        if MKISOFS_CMD is None:
+            raise RuntimeError("Утилита mkisofs/genisoimage не установлена.\n"
+                               "Установите её (apt install genisoimage или аналогичное).")
+
+        if self.type_var.get().startswith("NGFW"):
+            user_data = self.user_data_text.get("1.0", tk.END).strip()
+            meta_data = self.meta_data_text.get("1.0", tk.END).strip()
+            vendor_data = self.vendor_data_text.get("1.0", tk.END).strip()
+            create_nocloud_iso(str(output_path), user_data, meta_data, vendor_data)
+        else:
+            file_name = self.config_file_name_var.get().strip()
+            content = self.config_text.get("1.0", tk.END).strip()
+            vol_id = "CISCO" if "cisco" in self.type_var.get().lower() else "MIKROTIK"
+            create_generic_config_iso(str(output_path), file_name, content, vol_id)
+
+    def _save_existing(self):
+        """Перезаписывает исходный ISO (если в режиме редактирования)."""
+        if not self.editing_iso_path:
+            return
+        if not messagebox.askyesno("Подтверждение",
+                                   f"Перезаписать существующий ISO?\n{self.editing_iso_path}",
+                                   parent=self):
+            return
+        try:
+            self._save_to_path(self.editing_iso_path)
+        except Exception as e:
+            ErrorDialog(self, "Ошибка сохранения", str(e))
+            return
+        self.result_path = self.editing_iso_path
+        messagebox.showinfo("Готово", f"ISO перезаписан:\n{self.editing_iso_path}", parent=self)
+        self.destroy()
+
+    def _create_new(self):
+        """Создаёт новый ISO с именем из поля (или сохраняет как)."""
         iso_name = self.iso_name_var.get().strip()
         if not iso_name:
             ErrorDialog(self, "Ошибка", "Введите имя ISO-файла.")
@@ -840,22 +999,15 @@ class ConfigISOEditorDialog(tk.Toplevel):
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = out_dir / iso_name
 
-        # Проверка наличия mkisofs
-        if MKISOFS_CMD is None:
-            ErrorDialog(self, "Ошибка", "Утилита mkisofs/genisoimage не установлена.\nУстановите её (apt install genisoimage или аналогичное).")
-            return
+        # Если файл уже существует и это не тот же файл, что редактируем, спросим
+        if output_path.exists() and (not self.editing_iso_path or output_path != self.editing_iso_path):
+            if not messagebox.askyesno("Файл существует",
+                                       f"Файл {output_path.name} уже существует. Заменить?",
+                                       parent=self):
+                return
 
         try:
-            if self.type_var.get().startswith("NGFW"):
-                user_data = self.user_data_text.get("1.0", tk.END).strip()
-                meta_data = self.meta_data_text.get("1.0", tk.END).strip()
-                vendor_data = self.vendor_data_text.get("1.0", tk.END).strip()
-                create_nocloud_iso(str(output_path), user_data, meta_data, vendor_data)
-            else:
-                file_name = self.config_file_name_var.get().strip()
-                content = self.config_text.get("1.0", tk.END).strip()
-                vol_id = "CISCO" if "cisco" in self.type_var.get().lower() else "MIKROTIK"
-                create_generic_config_iso(str(output_path), file_name, content, vol_id)
+            self._save_to_path(output_path)
         except Exception as e:
             ErrorDialog(self, "Ошибка создания ISO", str(e))
             return
@@ -869,12 +1021,14 @@ class ConfigISOManagerDialog(tk.Toplevel):
         super().__init__(parent)
         self.config = config
         self.title("Управление конфигурационными ISO")
-        self.geometry("700x500")
+        self.geometry("750x550")
         self.minsize(500, 350)
 
         top_frame = ttk.Frame(self, padding=5)
         top_frame.pack(fill=tk.X)
+
         ttk.Button(top_frame, text="Создать новый ISO", command=self._create_iso).pack(side=tk.LEFT, padx=5)
+        ttk.Button(top_frame, text="Редактировать выбранный", command=self._edit_iso).pack(side=tk.LEFT, padx=5)
         ttk.Button(top_frame, text="Удалить выбранный", command=self._delete_iso).pack(side=tk.LEFT, padx=5)
         ttk.Button(top_frame, text="Обновить список", command=self._refresh).pack(side=tk.LEFT, padx=5)
 
@@ -912,6 +1066,21 @@ class ConfigISOManagerDialog(tk.Toplevel):
         dlg = ConfigISOEditorDialog(self, self.config)
         self.wait_window(dlg)
         if dlg.result_path:
+            self._refresh()
+
+    def _edit_iso(self):
+        sel = self.tree.selection()
+        if not sel:
+            ErrorDialog(self, "Ошибка", "Выберите ISO для редактирования.")
+            return
+        path_str = self.tree.item(sel[0], "tags")[0]
+        path = Path(path_str)
+        if not path.exists():
+            ErrorDialog(self, "Ошибка", "Файл не найден.")
+            return
+        dlg = ConfigISOEditorDialog(self, self.config, iso_path=str(path))
+        self.wait_window(dlg)
+        if dlg.result_path:   # если что-то сохранили (перезаписали или создали новое)
             self._refresh()
 
     def _delete_iso(self):
@@ -1024,7 +1193,9 @@ class CreateTemplateDialog(tk.Toplevel):
         frame.columnconfigure(1, weight=1)
 
     def _browse_file(self, stringvar):
-        initial = self.config.get("import_dir", DEFAULT_IMPORT_DIR)
+        dlg = FileSelectorDialog(self, initial_dir=initial,
+                         title="Выберите файл образа",
+                         extensions=IMAGE_EXTENSIONS)
         dlg = FileSelectorDialog(self, initial_dir=initial, title="Выберите файл")
         self.wait_window(dlg)
         if dlg.result:
@@ -1167,20 +1338,54 @@ class GNS3ImageManager:
 
     def add_image(self):
         initial_dir = self.config.get("import_dir", DEFAULT_IMPORT_DIR)
-        dlg = FileSelectorDialog(self.root, initial_dir=initial_dir, title="Выберите образ для добавления")
+        DISPLAY_EXTENSIONS = IMAGE_EXTENSIONS | {'.zip'}
+        dlg = FileSelectorDialog(self.root, initial_dir=initial_dir,
+                                title="Выберите образ или ZIP-архив",
+                                extensions=DISPLAY_EXTENSIONS)
         self.root.wait_window(dlg)
         if not dlg.result:
             return
         filepath = dlg.result
         src = Path(filepath)
-        if not src.is_file(): ErrorDialog(self.root, "Ошибка", "Файл не существует."); return
+        if not src.is_file():
+            ErrorDialog(self.root, "Ошибка", "Файл не существует.")
+            return
+
+        # Если файл является ZIP-архивом — распаковываем
+        if src.suffix.lower() == '.zip':
+            try:
+                extracted = extract_images_from_zip(src, TARGET_DIR)
+            except Exception as e:
+                ErrorDialog(self.root, "Ошибка распаковки ZIP", str(e))
+                return
+            if not extracted:
+                ErrorDialog(self.root, "Ошибка", "В ZIP-архиве не найдено файлов образов с допустимыми расширениями.")
+                return
+            self.refresh_list()
+            self.status_var.set(f"Распаковано {len(extracted)} файлов из {src.name}")
+            # Предлагаем создать шаблон для первого извлечённого файла
+            if messagebox.askyesno("Шаблон GNS3", "Создать шаблон QEMU для первого распакованного образа?"):
+                self.create_template_for_image(str(extracted[0]))
+            return
+
+        # Обычный файл образа
+        if src.suffix.lower() not in IMAGE_EXTENSIONS:
+            ErrorDialog(self.root, "Ошибка", f"Расширение '{src.suffix}' не поддерживается как образ.")
+            return
+
         dest = TARGET_DIR / src.name
         if dest.exists():
-            if not messagebox.askyesno("Файл существует", f"'{src.name}' уже есть. Заменить?"): return
+            if not messagebox.askyesno("Файл существует", f"'{src.name}' уже есть. Заменить?"):
+                return
         try:
-            shutil.copy2(src, dest); self.refresh_list(); self.status_var.set(f"Добавлен: {src.name}")
-        except Exception as e: ErrorDialog(self.root, "Ошибка копирования", str(e)); return
-        if messagebox.askyesno("Шаблон GNS3", "Создать шаблон QEMU?"): self.create_template_for_image(str(dest))
+            shutil.copy2(src, dest)
+            self.refresh_list()
+            self.status_var.set(f"Добавлен: {src.name}")
+        except Exception as e:
+            ErrorDialog(self.root, "Ошибка копирования", str(e))
+            return
+        if messagebox.askyesno("Шаблон GNS3", "Создать шаблон QEMU?"):
+            self.create_template_for_image(str(dest))
 
     def create_template_for_image(self, image_path):
         dialog = CreateTemplateDialog(self.root, image_path, self.config)
