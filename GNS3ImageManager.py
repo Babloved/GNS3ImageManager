@@ -293,51 +293,92 @@ def extract_images_from_zip(zip_path, dest_dir):
 
     return extracted
 
-# -------------------- Тёмная тема --------------------
+# -------------------- Тема в стиле VS Code Dark Modern --------------------
+THEME = {
+    "background": "#1f1f1f",      # editor.background
+    "surface": "#292929",         # мягко отделённые поля и панели
+    "surface_hover": "#323232",
+    "text": "#b8b8b8",            # менее контрастный светло-серый
+    "muted": "#858585",           # вторичный текст
+    "accent": "#0078d4",          # button/focusBorder
+    "accent_hover": "#026ec1",    # button.hoverBackground
+    "danger": "#303030",          # нейтральное оформление опасных действий
+    "danger_hover": "#414141",
+}
 def set_dark_theme(root):
     style = ttk.Style()
-    root.tk_setPalette(background='#2e2e2e', foreground='#ffffff',
-                       activeBackground='#3e3e3e', activeForeground='#ffffff')
+    root.tk_setPalette(background=THEME["background"], foreground=THEME["text"],
+                       activeBackground=THEME["surface_hover"], activeForeground=THEME["text"])
     style.theme_use('clam')
-    style.configure(".", background='#2e2e2e', foreground='#ffffff',
-                    fieldbackground='#3e3e3e', troughcolor='#2e2e2e',
-                    selectbackground='#4a6984', selectforeground='#ffffff')
-    style.configure("Treeview", background="#2e2e2e", foreground="#ffffff",
-                    fieldbackground="#2e2e2e", rowheight=25)
-    style.configure("Treeview.Heading", background="#3e3e3e", foreground="#ffffff")
-    style.map("Treeview", background=[('selected', '#4a6984')])
-    style.configure("TLabel", background='#2e2e2e', foreground='#ffffff')
-    style.configure("TButton", background='#3e3e3e', foreground='#ffffff',
-                    borderwidth=1, focusthickness=3)
-    style.map("TButton", background=[('active', '#4a6984')])
-    style.configure("TEntry", foreground='#ffffff', fieldbackground='#3e3e3e')
-    style.configure("TCombobox", foreground='#ffffff', fieldbackground='#3e3e3e',
-                    background='#3e3e3e', arrowcolor='#ffffff')
-    root.option_add("*TCombobox*Listbox*Background", '#3e3e3e')
-    root.option_add("*TCombobox*Listbox*Foreground", '#ffffff')
-    style.configure("TFrame", background='#2e2e2e')
-    style.configure("TScrollbar", background='#3e3e3e', troughcolor='#2e2e2e')
-    style.configure("TLabelframe", background='#2e2e2e', foreground='#ffffff')
-    style.configure("TLabelframe.Label", background='#2e2e2e', foreground='#ffffff')
-    style.configure("TNotebook", background='#2e2e2e', borderwidth=0)
-    style.configure("TNotebook.Tab", background='#3e3e3e', foreground='#ffffff')
-    style.map("TNotebook.Tab", background=[('selected', '#4a6984')])
-    root.option_add("*Text.Background", '#3e3e3e')
-    root.option_add("*Text.Foreground", '#ffffff')
-    root.option_add("*Text.InsertBackground", '#ffffff')
+    style.configure(".", background=THEME["background"], foreground=THEME["text"],
+                    fieldbackground=THEME["surface"], troughcolor=THEME["background"],
+                    selectbackground=THEME["accent"], selectforeground=THEME["text"],
+                    font=("Segoe UI", 10))
+    style.configure("Treeview", background=THEME["background"], foreground=THEME["text"],
+                    fieldbackground=THEME["background"], rowheight=29, borderwidth=0)
+    style.configure("Treeview.Heading", background=THEME["surface"], foreground=THEME["muted"],
+                    relief="flat", padding=(10, 7), font=("Segoe UI", 9, "bold"))
+    style.map("Treeview", background=[('selected', THEME["accent"])])
+    style.configure("TLabel", background=THEME["background"], foreground=THEME["text"])
+    style.configure("TButton", background=THEME["surface"], foreground=THEME["text"],
+                    borderwidth=1, focusthickness=2, padding=(10, 6))
+    style.map("TButton", background=[('active', THEME["surface_hover"])])
+    # Иерархия действий строится на поверхности и рамке, а не на ярких цветах.
+    style.configure("Accent.TButton", background="#3a3a3a", foreground="#d0d0d0",
+                    borderwidth=1, padding=(11, 6))
+    style.map("Accent.TButton", background=[('active', "#484848")])
+    style.configure("Danger.TButton", background=THEME["danger"], foreground="#aaaaaa",
+                    borderwidth=1)
+    style.map("Danger.TButton", background=[('active', THEME["danger_hover"])])
+    style.configure("TEntry", foreground=THEME["text"], fieldbackground=THEME["surface"], padding=6)
+    style.configure("TCombobox", foreground=THEME["text"], fieldbackground=THEME["surface"],
+                    background=THEME["surface"], arrowcolor=THEME["text"], padding=5)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", THEME["surface"])],
+              foreground=[("readonly", THEME["text"])],
+              selectbackground=[("readonly", THEME["accent"])],
+              selectforeground=[("readonly", THEME["text"])])
+    # В Linux всплывающий список Combobox — отдельный Listbox, поэтому
+    # его цвета нужно задавать через базу опций Tk, а не только через ttk.Style.
+    for pattern, color in (
+        ("*TCombobox*Listbox.background", THEME["surface"]),
+        ("*TCombobox*Listbox.foreground", THEME["text"]),
+        ("*TCombobox*Listbox.selectBackground", THEME["accent"]),
+        ("*TCombobox*Listbox.selectForeground", THEME["text"]),
+        ("*TCombobox*Listbox*Background", THEME["surface"]),
+        ("*TCombobox*Listbox*Foreground", THEME["text"]),
+    ):
+        root.option_add(pattern, color)
+    style.configure("TFrame", background=THEME["background"])
+    style.configure("TScrollbar", background=THEME["surface"], troughcolor=THEME["background"], arrowsize=14)
+    style.configure("TLabelframe", background=THEME["background"], foreground=THEME["muted"], padding=4)
+    style.configure("TLabelframe.Label", background=THEME["background"], foreground=THEME["muted"], font=("Segoe UI", 9, "bold"))
+    style.configure("TNotebook", background=THEME["background"], borderwidth=0)
+    style.configure("TNotebook.Tab", background=THEME["surface"], foreground=THEME["muted"], padding=(14, 7))
+    style.map("TNotebook.Tab", background=[('selected', THEME["accent"])], foreground=[('selected', THEME["text"])])
+    root.option_add("*Text.Background", THEME["surface"])
+    root.option_add("*Text.Foreground", THEME["text"])
+    root.option_add("*Text.InsertBackground", THEME["text"])
 
 # -------------------- Умное имя шаблона --------------------
 def generate_template_name(image_path: str) -> str:
+    """Формирует короткое, читаемое имя шаблона из имени файла образа."""
     name = Path(image_path).stem
-    if name.lower().startswith("ngfw-"):
-        parts = name.split("-")
-        if len(parts) >= 4 and parts[1].lower() == "x86" and parts[2] == "64":
-            version = parts[3]
-            if version.lower().endswith("r") or "release" in name.lower():
-                match = re.match(r"(\d+\.\d+\.\d+\.\d+[A-Za-z]?)", version)
-                if match:
-                    version = match.group(1)
-            return f"NGFW {version}"
+
+    # Типичные имена: ngfw-x86-64-7.3.3.340281R-release-public.qcow2.
+    # Хвосты вроде release-public намеренно не включаем в имя шаблона.
+    match = re.match(
+        r"^(ngfw|mc|logan|swg|dcfw|siem)[_-]x86[-_]64[_-](\d+\.\d+\.\d+\.\d+[A-Za-z]?)",
+        name,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        product_names = {
+            "ngfw": "NGFW", "mc": "MC", "logan": "Logan",
+            "swg": "SWG", "dcfw": "DCFW", "siem": "SIEM",
+        }
+        return f"{product_names[match.group(1).lower()]} {match.group(2)}"
+
     clean = re.sub(r'[-_]+', ' ', name)
     return ' '.join(word.capitalize() for word in clean.split())
 
@@ -371,7 +412,7 @@ class ErrorDialog(tk.Toplevel):
 
         text_frame = ttk.Frame(main_frame)
         text_frame.pack(fill=tk.BOTH, expand=True)
-        self.text = tk.Text(text_frame, wrap=tk.WORD, bg="#3e3e3e", fg="white", insertbackground="white")
+        self.text = tk.Text(text_frame, wrap=tk.WORD, bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"])
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.text.yview)
         self.text.configure(yscrollcommand=scrollbar.set)
@@ -471,7 +512,9 @@ class FileSelectorDialog(tk.Toplevel):
         nav_frame.pack(fill=tk.X, padx=10, pady=5)
         ttk.Button(nav_frame, text="Вверх", command=self._go_up).pack(side=tk.LEFT, padx=5)
         self.dir_var = tk.StringVar(value=str(self.current_dir))
-        ttk.Entry(nav_frame, textvariable=self.dir_var, width=60).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        path_entry = ttk.Entry(nav_frame, textvariable=self.dir_var, width=60)
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        path_entry.bind("<Return>", lambda event: self._browse_to())
         ttk.Button(nav_frame, text="Перейти", command=self._browse_to).pack(side=tk.LEFT, padx=5)
 
         # --- таблица ---
@@ -496,6 +539,7 @@ class FileSelectorDialog(tk.Toplevel):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.bind("<Double-1>", self._on_double_click)
+        self.bind("<Escape>", lambda event: self.destroy())
 
         # --- кнопки ---
         btn_frame = ttk.Frame(self)
@@ -619,7 +663,7 @@ class SettingsDialog(tk.Toplevel):
         self.geometry("600x700")
         self.minsize(500, 600)
 
-        canvas = tk.Canvas(self, bg='#2e2e2e', highlightthickness=0)
+        canvas = tk.Canvas(self, bg=THEME["background"], highlightthickness=0)
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=canvas.yview)
         scroll_frame = ttk.Frame(canvas)
 
@@ -724,8 +768,8 @@ class SettingsDialog(tk.Toplevel):
         row += 1
 
         self.linked_clone_var = tk.BooleanVar(value=config.get("linked_clone", True))
-        ttk.Checkbutton(main_frame, variable=self.linked_clone_var).grid(row=row, column=1, sticky="w", padx=5, pady=5)
-        ttk.Label(main_frame, text="Linked base по умолчанию:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(main_frame, text="Связанные клоны по умолчанию:").grid(row=row, column=0, sticky="w", padx=5, pady=5)
+        ttk.Checkbutton(main_frame, text="Использовать linked clone", variable=self.linked_clone_var).grid(row=row, column=1, sticky="w", padx=5, pady=5)
         row += 1
 
         btn_frame = ttk.Frame(main_frame)
@@ -858,7 +902,7 @@ class ConfigISOEditorDialog(tk.Toplevel):
             tab_user = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_user, text="user-data")
             ttk.Label(tab_user, text="user-data (YAML):", font=("", 9, "bold")).pack(anchor="w")
-            self.user_data_text = tk.Text(tab_user, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
+            self.user_data_text = tk.Text(tab_user, wrap="word", bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"])
             self.user_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.user_data_text.insert("1.0", "#cloud-config\npassword: admin\nchpasswd: { expire: False }\nssh_pwauth: true\n")
 
@@ -866,7 +910,7 @@ class ConfigISOEditorDialog(tk.Toplevel):
             tab_meta = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_meta, text="meta-data")
             ttk.Label(tab_meta, text="meta-data:", font=("", 9, "bold")).pack(anchor="w")
-            self.meta_data_text = tk.Text(tab_meta, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white", height=5)
+            self.meta_data_text = tk.Text(tab_meta, wrap="word", bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"], height=5)
             self.meta_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.meta_data_text.insert("1.0", "instance-id: i-ngfw\nlocal-hostname: ngfw\n")
 
@@ -874,7 +918,7 @@ class ConfigISOEditorDialog(tk.Toplevel):
             tab_vendor = ttk.Frame(self.content_notebook, padding=10)
             self.content_notebook.add(tab_vendor, text="vendor-data")
             ttk.Label(tab_vendor, text="vendor-data (опционально):", font=("", 9, "bold")).pack(anchor="w")
-            self.vendor_data_text = tk.Text(tab_vendor, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
+            self.vendor_data_text = tk.Text(tab_vendor, wrap="word", bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"])
             self.vendor_data_text.pack(fill=tk.BOTH, expand=True, pady=5)
             self.vendor_data_text.insert("1.0", "")
         else:
@@ -887,7 +931,7 @@ class ConfigISOEditorDialog(tk.Toplevel):
             ttk.Label(frame_name, text="Имя файла внутри ISO:").pack(side=tk.LEFT)
             ttk.Entry(frame_name, textvariable=self.config_file_name_var, width=30).pack(side=tk.LEFT, padx=5)
 
-            self.config_text = tk.Text(tab_file, wrap="word", bg="#3e3e3e", fg="white", insertbackground="white")
+            self.config_text = tk.Text(tab_file, wrap="word", bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"])
             self.config_text.pack(fill=tk.BOTH, expand=True, pady=5)
             if self.type_var.get().startswith("Cisco"):
                 self.config_text.insert("1.0", "!\nhostname Router\n!\n")
@@ -1045,6 +1089,8 @@ class ConfigISOManagerDialog(tk.Toplevel):
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind("<ButtonRelease-1>", self._open_iso_on_click)
+        self.tree.bind("<Return>", lambda event: self._edit_iso())
 
         self._refresh()
         self.grab_set()
@@ -1061,6 +1107,11 @@ class ConfigISOManagerDialog(tk.Toplevel):
                 size_kb = stat.st_size // 1024
                 mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
                 self.tree.insert("", tk.END, values=(entry.name, size_kb, mtime), tags=(str(entry),))
+
+    def _open_iso_on_click(self, event):
+        """Открывает редактор по щелчку именно по строке таблицы, а не по пустому месту."""
+        if self.tree.identify_row(event.y):
+            self.after_idle(self._edit_iso)
 
     def _create_iso(self):
         dlg = ConfigISOEditorDialog(self, self.config)
@@ -1156,7 +1207,20 @@ class CreateTemplateDialog(tk.Toplevel):
         ttk.Entry(frame, textvariable=self.symbol_var, width=35).grid(row=r, column=1, padx=5, pady=5, sticky="ew"); r += 1
         ttk.Label(frame, text="Категория:").grid(row=r, column=0, sticky="w", padx=5, pady=5)
         self.category_var = tk.StringVar(value=self.config.get("default_category", "router"))
-        ttk.Combobox(frame, textvariable=self.category_var, values=["router", "switch", "guest", "firewall"], width=20).grid(row=r, column=1, sticky="w", padx=5, pady=5)
+        ttk.Combobox(frame, textvariable=self.category_var, values=["router", "switch", "guest", "firewall"], width=20).grid(row=r, column=1, sticky="w", padx=5, pady=5); r += 1
+
+        ttk.Label(frame, text="Конфигурационный ISO (cloud-init):").grid(row=r, column=0, sticky="w", padx=5, pady=5)
+        self.cdrom_var = tk.StringVar()
+        self.config_iso_choices = self._get_config_iso_choices()
+        cdrom_frame = ttk.Frame(frame)
+        cdrom_frame.grid(row=r, column=1, sticky="ew", padx=5, pady=5)
+        self.cdrom_combo = ttk.Combobox(cdrom_frame, textvariable=self.cdrom_var,
+                                        values=list(self.config_iso_choices), state="readonly", width=35)
+        self.cdrom_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(cdrom_frame, text="Обновить", command=self._refresh_config_iso_choices).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(cdrom_frame, text="Обзор", command=self._browse_cdrom).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(cdrom_frame, text="Редактировать ISO", command=self._edit_selected_config_iso).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(cdrom_frame, text="Новый ISO", command=self._create_config_iso).pack(side=tk.LEFT, padx=(5, 0))
         frame.columnconfigure(1, weight=1)
 
     def _create_disks_tab(self, parent):
@@ -1180,26 +1244,30 @@ class CreateTemplateDialog(tk.Toplevel):
         ttk.Combobox(frame, textvariable=self.hdb_iface_var, values=ifaces, state="readonly", width=8).grid(row=r, column=3, padx=5)
         r += 1
 
-        ttk.Label(frame, text="CDROM образ:").grid(row=r, column=0, sticky="w", padx=5, pady=5)
-        self.cdrom_var = tk.StringVar()
-        cdrom_frame = ttk.Frame(frame)
-        cdrom_frame.grid(row=r, column=1, columnspan=3, sticky="ew", pady=5)
-        ttk.Entry(cdrom_frame, textvariable=self.cdrom_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(cdrom_frame, text="Обзор", command=self._browse_cdrom).pack(side=tk.LEFT, padx=5)
-        ttk.Button(cdrom_frame, text="Создать ISO", command=self._create_config_iso).pack(side=tk.LEFT, padx=5)
-        r += 1
-
         ttk.Label(frame, text="* Пути могут быть абсолютными или относительными (от images/QEMU)").grid(row=r, column=0, columnspan=4, sticky="w", padx=5, pady=10)
         frame.columnconfigure(1, weight=1)
 
     def _browse_file(self, stringvar):
-        dlg = FileSelectorDialog(self, initial_dir=initial,
-                         title="Выберите файл образа",
-                         extensions=IMAGE_EXTENSIONS)
-        dlg = FileSelectorDialog(self, initial_dir=initial, title="Выберите файл")
+        initial_dir = str(Path(stringvar.get()).parent) if stringvar.get() else str(TARGET_DIR)
+        dlg = FileSelectorDialog(self, initial_dir=initial_dir,
+                                 title="Выберите файл образа", extensions=IMAGE_EXTENSIONS)
         self.wait_window(dlg)
         if dlg.result:
             stringvar.set(dlg.result)
+
+    def _get_config_iso_choices(self):
+        if not CONFIG_ISO_DIR.exists():
+            return {}
+        return {entry.name: str(entry) for entry in sorted(CONFIG_ISO_DIR.iterdir(), key=lambda p: p.name.lower())
+                if entry.is_file() and entry.suffix.lower() == ".iso"}
+
+    def _refresh_config_iso_choices(self):
+        self.config_iso_choices = self._get_config_iso_choices()
+        self.cdrom_combo.configure(values=list(self.config_iso_choices))
+
+    def _selected_cdrom_path(self):
+        value = self.cdrom_var.get().strip()
+        return self.config_iso_choices.get(value, value)
 
     def _browse_cdrom(self):
         dlg = FileSelectorDialog(self, initial_dir=str(CONFIG_ISO_DIR), title="Выберите ISO-образ", extensions=['.iso'])
@@ -1211,7 +1279,23 @@ class CreateTemplateDialog(tk.Toplevel):
         dlg = ConfigISOEditorDialog(self, self.config)
         self.wait_window(dlg)
         if dlg.result_path:
-            self.cdrom_var.set(dlg.result_path)
+            self._refresh_config_iso_choices()
+            self.cdrom_var.set(Path(dlg.result_path).name if Path(dlg.result_path).parent == CONFIG_ISO_DIR else dlg.result_path)
+
+    def _edit_selected_config_iso(self):
+        iso_path = self._selected_cdrom_path()
+        if not iso_path:
+            ErrorDialog(self, "Выбор ISO", "Выберите конфигурационный ISO из списка, который нужно отредактировать.")
+            return
+        path = Path(iso_path)
+        if not path.is_file() or path.suffix.lower() != ".iso":
+            ErrorDialog(self, "Выбор ISO", "Выбранный файл ISO не найден. Обновите список или выберите файл через «Обзор».")
+            return
+        dlg = ConfigISOEditorDialog(self, self.config, iso_path=str(path))
+        self.wait_window(dlg)
+        if dlg.result_path:
+            self._refresh_config_iso_choices()
+            self.cdrom_var.set(Path(dlg.result_path).name if Path(dlg.result_path).parent == CONFIG_ISO_DIR else dlg.result_path)
 
     def _create_network_tab(self, parent):
         frame = ttk.Frame(parent, padding=10)
@@ -1231,7 +1315,7 @@ class CreateTemplateDialog(tk.Toplevel):
         frame.pack(fill=tk.BOTH, expand=True)
         r = 0
         ttk.Label(frame, text="Доп. опции QEMU:").grid(row=r, column=0, sticky="nw", padx=5, pady=5)
-        text = tk.Text(frame, width=40, height=6, bg='#3e3e3e', fg='#ffffff', insertbackground='#ffffff')
+        text = tk.Text(frame, width=40, height=6, bg=THEME["surface"], fg=THEME["text"], insertbackground=THEME["text"])
         text.grid(row=r, column=1, padx=5, pady=5, sticky="ew"); text.insert("1.0", self.config.get("options", ""))
         self.options_text = text; r += 1
         self.linked_clone_var = tk.BooleanVar(value=self.config.get("linked_clone", True))
@@ -1247,7 +1331,7 @@ class CreateTemplateDialog(tk.Toplevel):
         self.result = {
             "name": self.name_var.get().strip(), "ram": self.ram_var.get(), "cpus": self.cpu_var.get(),
             "qemu_path": self.qemu_var.get().strip(), "hda_disk_image": self.hda_var.get().strip(),
-            "hdb_disk_image": self.hdb_var.get().strip(), "cdrom_image": self.cdrom_var.get().strip(),
+            "hdb_disk_image": self.hdb_var.get().strip(), "cdrom_image": self._selected_cdrom_path(),
             "boot_priority": self.boot_var.get(), "platform": self.platform_var.get(),
             "console_type": self.console_var.get(), "adapters": self.adapters_var.get(),
             "adapter_type": self.adapter_type_var.get(), "mac_address": self.mac_var.get().strip(),
@@ -1268,45 +1352,90 @@ class GNS3ImageManager:
         self.config = load_config()
         self.sort_column = "name"
         self.sort_reverse = False
+        self.templates_by_image = None
+        self.template_association_state = "Проверяется API…"
+        self.vm_count_by_image = None
+        self.vm_count_complete = False
+        self.filter_var = tk.StringVar()
+        self.filter_var.trace_add("write", lambda *_: self.refresh_list())
         main_frame = ttk.Frame(root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        top_frame = ttk.Frame(main_frame)
-        top_frame.pack(fill=tk.X, pady=(0, 10))
-        row1 = ttk.Frame(top_frame); row1.pack(fill=tk.X, pady=(0, 5))
-        ttk.Button(row1, text="Обновить", command=self.refresh_list).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row1, text="Добавить образ...", command=self.add_image).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row1, text="Удалить выбранные", command=self.delete_images).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row1, text="Удалить неиспользуемые", command=self.delete_unused_images).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row1, text="Удалить шаблоны без образа", command=self.delete_templates_with_missing_images).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row1, text="Конфиг. ISO", command=self.open_config_iso_manager).pack(side=tk.LEFT, padx=10)
-        row2 = ttk.Frame(top_frame); row2.pack(fill=tk.X)
-        ttk.Button(row2, text="Проверить API", command=self.check_api).pack(side=tk.LEFT, padx=3)
-        ttk.Button(row2, text="Настройки GNS3", command=self.open_settings).pack(side=tk.LEFT, padx=3)
+        header = ttk.Frame(main_frame)
+        header.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(header, text="Образы QEMU", font=("", 16, "bold")).pack(side=tk.LEFT)
         self.api_status_var = tk.StringVar(value="●")
-        self.api_status_label = ttk.Label(row2, textvariable=self.api_status_var, foreground="red", font=("", 12))
-        self.api_status_label.pack(side=tk.RIGHT, padx=(20, 5))
-        ttk.Label(row2, text="API:").pack(side=tk.RIGHT)
+        ttk.Label(header, text="API GNS3:").pack(side=tk.RIGHT)
+        self.api_status_label = ttk.Label(header, textvariable=self.api_status_var,
+                                           foreground="red", font=("", 12))
+        self.api_status_label.pack(side=tk.RIGHT, padx=(6, 2))
+
+        toolbar = ttk.Frame(main_frame)
+        toolbar.pack(fill=tk.X, pady=(0, 8))
+        images_group = ttk.LabelFrame(toolbar, text="Образы", padding=6)
+        images_group.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(images_group, text="Добавить образ…", style="Accent.TButton",
+                   command=self.add_image).pack(side=tk.LEFT, padx=(0, 5))
+        self.create_template_button = ttk.Button(images_group, text="Создать шаблон",
+                                                 command=self.create_template_for_selected,
+                                                 state=tk.DISABLED)
+        self.create_template_button.pack(side=tk.LEFT, padx=5)
+        self.delete_button = ttk.Button(images_group, text="Удалить выбранные", style="Danger.TButton",
+                                        command=self.delete_images, state=tk.DISABLED)
+        self.delete_button.pack(side=tk.LEFT, padx=(5, 0))
+
+        secondary_bar = ttk.Frame(main_frame)
+        secondary_bar.pack(fill=tk.X, pady=(0, 8))
+        tools_group = ttk.LabelFrame(secondary_bar, text="Инструменты", padding=6)
+        tools_group.pack(side=tk.LEFT)
+        ttk.Button(tools_group, text="Конфигурационные ISO", command=self.open_config_iso_manager).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(tools_group, text="Настройки", command=self.open_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(tools_group, text="Проверить API", command=self.check_api).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(tools_group, text="Удалить неиспользуемые…", style="Danger.TButton",
+                   command=self.delete_unused_images).pack(side=tk.LEFT, padx=(12, 5))
+        ttk.Button(tools_group, text="Удалить шаблоны без образов…", style="Danger.TButton",
+                   command=self.delete_templates_with_missing_images).pack(side=tk.LEFT, padx=5)
+
+        filter_frame = ttk.Frame(main_frame)
+        filter_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(filter_frame, text="Поиск:").pack(side=tk.LEFT)
+        self.filter_entry = ttk.Entry(filter_frame, textvariable=self.filter_var)
+        self.filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 8))
+        ttk.Button(filter_frame, text="Очистить", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT)
+        ttk.Button(filter_frame, text="Обновить", command=self.refresh_list).pack(side=tk.LEFT, padx=(8, 0))
 
         table_frame = ttk.Frame(main_frame)
         table_frame.pack(fill=tk.BOTH, expand=True)
-        columns = ("name", "size", "modified")
+        columns = ("name", "size", "templates", "vms", "modified")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode=tk.EXTENDED)
         self.tree.heading("name", text="Имя файла", command=lambda: self.sort_by_column("name"))
         self.tree.heading("size", text="Размер (МБ)", command=lambda: self.sort_by_column("size"))
+        self.tree.heading("templates", text="Привязанные шаблоны")
+        self.tree.heading("vms", text="ВМ", command=lambda: self.sort_by_column("vms"))
         self.tree.heading("modified", text="Изменён", command=lambda: self.sort_by_column("modified"))
         self.tree.column("name", width=600)
         self.tree.column("size", width=120, anchor=tk.CENTER)
+        self.tree.column("templates", width=260)
+        self.tree.column("vms", width=70, anchor=tk.CENTER)
         self.tree.column("modified", width=160, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
+        self.tree.bind("<Double-1>", self._on_image_double_click)
+        self.root.bind("<Control-i>", lambda event: self.add_image())
+        self.root.bind("<F5>", lambda event: self.refresh_list())
+        self.tree.bind("<Delete>", lambda event: self.delete_images())
 
         status_frame = ttk.Frame(main_frame)
         status_frame.pack(fill=tk.X, pady=(10, 0))
         self.status_var = tk.StringVar(value="Готово")
-        ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W).pack(fill=tk.X)
+        self.vm_info_var = tk.StringVar()
+        ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN,
+                  anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(status_frame, textvariable=self.vm_info_var, anchor=tk.E,
+                  foreground="gray").pack(side=tk.RIGHT, padx=(10, 0))
 
         self.refresh_list()
         self.root.after(500, self.check_api_silent)
@@ -1332,9 +1461,121 @@ class GNS3ImageManager:
         if self.sort_column == "name": files.sort(key=lambda x: x[0].lower(), reverse=self.sort_reverse)
         elif self.sort_column == "size": files.sort(key=lambda x: x[1], reverse=self.sort_reverse)
         elif self.sort_column == "modified": files.sort(key=lambda x: x[2], reverse=self.sort_reverse)
+        elif self.sort_column == "vms":
+            files.sort(
+                key=lambda item: self.vm_count_by_image.get(item[0], -1)
+                if self.vm_count_by_image is not None else -1,
+                reverse=self.sort_reverse,
+            )
+        query = self.filter_var.get().strip().lower()
+        if query:
+            files = [item for item in files if query in item[0].lower()]
         for name, size, mtime, path in files:
-            self.tree.insert("", tk.END, values=(name, size, mtime), tags=(str(path),))
-        self.status_var.set(f"Образов в папке: {len(files)}")
+            if self.templates_by_image is None:
+                template_text = self.template_association_state
+            else:
+                template_names = self.templates_by_image.get(name, [])
+                template_text = ", ".join(template_names) if template_names else "—"
+            if self.vm_count_by_image is None:
+                vm_text = "—"
+            else:
+                vm_count = self.vm_count_by_image.get(name, 0)
+                vm_text = str(vm_count) if self.vm_count_complete else f"≥ {vm_count}"
+            self.tree.insert("", tk.END, values=(name, size, template_text, vm_text, mtime), tags=(str(path),))
+        total = len(files) if not query else sum(
+            1 for entry in TARGET_DIR.iterdir()
+            if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS
+        )
+        self.status_var.set(f"Показано образов: {len(files)} из {total}" if query else f"Образов в папке: {total}")
+        if hasattr(self, "vm_info_var"):
+            self.vm_info_var.set("≥ — минимум: часть проектов недоступна"
+                                 if self.vm_count_by_image is not None and not self.vm_count_complete else "")
+        self._on_selection_changed()
+
+    def _on_selection_changed(self, event=None):
+        count = len(self.tree.selection())
+        self.delete_button.configure(state=tk.NORMAL if count else tk.DISABLED)
+        self.create_template_button.configure(state=tk.NORMAL if count == 1 else tk.DISABLED)
+        if count:
+            suffix = "" if count == 1 else "а" if 2 <= count <= 4 else "ов"
+            self.status_var.set(f"Выбрано образ{suffix}: {count}")
+
+    def _on_image_double_click(self, event):
+        """Открывает создание шаблона только при двойном щелчке по строке образа."""
+        if self.tree.identify_region(event.x, event.y) == "cell":
+            self.create_template_for_selected()
+
+    def create_template_for_selected(self):
+        selected = self.tree.selection()
+        if len(selected) != 1:
+            ErrorDialog(self.root, "Выбор образа", "Выберите один образ, для которого нужно создать шаблон.")
+            return
+        values = self.tree.item(selected[0], "values")
+        if values:
+            self.create_template_for_image(str(TARGET_DIR / values[0]))
+
+    def refresh_template_associations(self):
+        """Загружает привязки образов к шаблонам одним запросом к API GNS3."""
+        try:
+            response = requests.get(f"{self.config['gns3_host']}/v2/templates",
+                                    auth=self._auth(), timeout=5)
+            if response.status_code != 200:
+                self.templates_by_image = None
+                self.template_association_state = "Недоступно"
+                self.vm_count_by_image = None
+                self.vm_count_complete = False
+                self.refresh_list()
+                return
+            associations = {}
+            images_by_template_id = {}
+            for template in response.json():
+                image_names = set()
+                for key in ("hda_disk_image", "hdb_disk_image"):
+                    image = template.get(key)
+                    if image:
+                        image_name = Path(image).name
+                        image_names.add(image_name)
+                        associations.setdefault(image_name, []).append(template.get("name", "Без имени"))
+                if image_names:
+                    images_by_template_id[template.get("template_id")] = image_names
+            self.templates_by_image = associations
+            self.template_association_state = ""
+            self.vm_count_by_image, self.vm_count_complete = self._get_vm_counts(images_by_template_id)
+        except Exception:
+            self.templates_by_image = None
+            self.template_association_state = "Недоступно"
+            self.vm_count_by_image = None
+            self.vm_count_complete = False
+        self.refresh_list()
+
+    def _get_vm_counts(self, images_by_template_id):
+        """Считает ВМ по шаблонам, не открывая и не изменяя проекты."""
+        counts = {image_name: 0 for images in images_by_template_id.values() for image_name in images}
+        complete = True
+        try:
+            projects_response = requests.get(f"{self.config['gns3_host']}/v2/projects",
+                                             auth=self._auth(), timeout=5)
+            if projects_response.status_code != 200:
+                return None, False
+            projects = projects_response.json()
+        except Exception:
+            return None, False
+
+        for project in projects:
+            try:
+                nodes_response = requests.get(
+                    f"{self.config['gns3_host']}/v2/projects/{project['project_id']}/nodes",
+                    auth=self._auth(), timeout=5,
+                )
+                if nodes_response.status_code != 200:
+                    complete = False
+                    continue
+                for node in nodes_response.json():
+                    for image_name in images_by_template_id.get(node.get("template_id"), set()):
+                        counts[image_name] += 1
+            except Exception:
+                complete = False
+        return counts, complete
 
     def add_image(self):
         initial_dir = self.config.get("import_dir", DEFAULT_IMPORT_DIR)
@@ -1417,6 +1658,7 @@ class GNS3ImageManager:
                 messagebox.showinfo("Шаблон создан", f"Шаблон '{td['name']}' создан.")
                 self.status_var.set(f"Шаблон создан: {td['name']}")
                 self.update_api_status(True)
+                self.refresh_template_associations()
             else:
                 ErrorDialog(self.root, "Ошибка API", f"Код: {resp.status_code}\n{resp.text}")
                 self.update_api_status(False)
@@ -1607,12 +1849,22 @@ class GNS3ImageManager:
 
     def check_api(self):
         ok, msg = self._test_api()
-        if ok: messagebox.showinfo("Успех", msg)
+        if ok:
+            self.refresh_template_associations()
+            messagebox.showinfo("Успех", msg)
         else: ErrorDialog(self.root, "Ошибка", msg)
 
     def check_api_silent(self):
         ok, _ = self._test_api()
         self.update_api_status(ok)
+        if ok:
+            self.refresh_template_associations()
+        else:
+            self.templates_by_image = None
+            self.template_association_state = "Недоступно"
+            self.vm_count_by_image = None
+            self.vm_count_complete = False
+            self.refresh_list()
 
     def _test_api(self):
         auth = self._auth()
