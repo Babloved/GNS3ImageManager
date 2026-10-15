@@ -5,7 +5,7 @@
 !*/
 
 # Разрешить все файлы с расширением .py
-!*.py
+GNS3ImageManager.py
 
 # Разрешить сам .gitignore (чтобы он был в репозитории)
 !.gitignore
@@ -21,6 +21,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py
 
 # Системные мусорные файлы
 .DS_Store

@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter import font as tkfont
@@ -47,7 +48,19 @@ TARGET_DIR = Path.home() / "GNS3/images/QEMU"
 IMAGE_EXTENSIONS = {".qcow2", ".img", ".vmdk", ".qcow", ".raw", ".vdi", ".vhd", ".vhdx"}
 CONFIG_FILE = Path.home() / ".gns3_image_manager_config.json"
 CONFIG_ISO_DIR = TARGET_DIR / "config_isos"            # папка для конфигурационных ISO
+LOG_FILE = Path.home() / ".gns3_image_manager.log"      # журнал действий (для диагностики)
 DEFAULT_IMPORT_DIR = str(Path.home() / "Downloads") if (Path.home() / "Downloads").exists() else str(Path.home())
+
+
+def log_event(message):
+    """Дописывает строку в журнал приложения (не мешает работе при ошибке)."""
+    try:
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > 2 * 1024 * 1024:
+            LOG_FILE.replace(LOG_FILE.with_suffix(".log.old"))
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
+    except Exception:
+        pass
 
 DEFAULT_CONFIG = {
     "gns3_host": "http://localhost:3080",
@@ -367,16 +380,17 @@ def generate_template_name(image_path: str) -> str:
     """Формирует короткое, читаемое имя шаблона из имени файла образа."""
     name = Path(image_path).stem
 
-    # Типичные имена: ngfw-x86-64-7.3.3.340281R-release-public.qcow2.
+    # Типичные имена: ngfw-x86-64-7.3.3.340281R-release-public.qcow2,
+    # waf-x86-64-7.6.0.491986R-release-public.qcow2.
     # Хвосты вроде release-public намеренно не включаем в имя шаблона.
     match = re.match(
-        r"^(ngfw|mc|logan|swg|dcfw|siem)[_-]x86[-_]64[_-](\d+\.\d+\.\d+\.\d+[A-Za-z]?)",
+        r"^(ngfw|waf|mc|logan|swg|dcfw|siem)[_-]x86[-_]64[_-](\d+\.\d+\.\d+\.\d+[A-Za-z]?)",
         name,
         flags=re.IGNORECASE,
     )
     if match:
         product_names = {
-            "ngfw": "NGFW", "mc": "MC", "logan": "Logan",
+            "ngfw": "NGFW", "waf": "WAF", "mc": "MC", "logan": "Logan",
             "swg": "SWG", "dcfw": "DCFW", "siem": "SIEM",
         }
         return f"{product_names[match.group(1).lower()]} {match.group(2)}"
@@ -386,17 +400,34 @@ def generate_template_name(image_path: str) -> str:
 
 # -------------------- Функция максимизации окна (кроссплатформенная) --------------------
 def maximize_window(window):
-    """Максимизирует окно на весь экран с сохранением рамок (не fullscreen)."""
+    """Разворачивает окно на весь экран с сохранением рамок (не fullscreen).
+
+    Запрос отправляется один раз: в Tk на X11 повторная установка атрибута
+    `-zoomed` переключает состояние и окно возвращается к прежнему размеру.
+    """
     try:
         window.state('zoomed')                     # Windows
+        return
     except tk.TclError:
-        try:
-            window.attributes('-zoomed', True)     # Linux (X11)
-        except tk.TclError:
-            window.update_idletasks()
-            screen_width = window.winfo_screenwidth()
-            screen_height = window.winfo_screenheight()
-            window.geometry(f"{screen_width}x{screen_height}+0+0")
+        pass
+    try:
+        window.attributes('-zoomed', True)         # Linux (X11)
+        return
+    except tk.TclError:
+        pass
+    # Запасной вариант — для оконных менеджеров без поддержки максимизации:
+    # подгоняем окно под размер родителя, а не под весь рабочий стол, иначе
+    # на нескольких мониторах окно растягивается на все сразу.
+    try:
+        window.update_idletasks()
+        parent = window.master
+        if isinstance(parent, (tk.Tk, tk.Toplevel)) and parent.winfo_width() > 1:
+            window.geometry(f"{parent.winfo_width()}x{parent.winfo_height()}"
+                            f"+{parent.winfo_rootx()}+{parent.winfo_rooty()}")
+        else:
+            window.geometry(f"{window.winfo_screenwidth()}x{window.winfo_screenheight()}+0+0")
+    except tk.TclError:
+        pass
 
 # -------------------- Горячие клавиши и контекстное меню для текстовых полей --------------------
 # Привязки вида <Control-z> сопоставляются по keysym, а keysym зависит от раскладки:
@@ -855,6 +886,12 @@ class ErrorDialog(tk.Toplevel):
         self.geometry("700x400")
         self.minsize(500, 250)
         self.resizable(True, True)
+        # Окно ошибки должно появляться там же, где главное окно, и быть поверх:
+        # иначе на нескольких мониторах его легко не заметить.
+        try:
+            self.transient(parent)
+        except tk.TclError:
+            pass
 
         main_frame = ttk.Frame(self, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -881,6 +918,11 @@ class ErrorDialog(tk.Toplevel):
         install_text_editor_shortcuts(self.text, editable=False)
         self.text.focus_set()
         maximize_window(self)
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
 
     def _copy_to_clipboard(self):
         text = self.text.get(1.0, tk.END).strip()
@@ -1616,15 +1658,26 @@ class ConfigISOManagerDialog(tk.Toplevel):
 
 # -------------------- Диалог создания шаблона (с кнопкой для ISO) --------------------
 class CreateTemplateDialog(tk.Toplevel):
-    def __init__(self, parent, image_path, config):
+    def __init__(self, parent, image_path, config, on_submit=None):
         super().__init__(parent)
         self.image_path = image_path
         self.config = config
         self.result = None
-        self.title("Создать шаблон QEMU в GNS3")
+        # Создание выполняет главное окно по этому колбэку: так шаблон создаётся
+        # даже если после закрытия окна что-то пойдёт не так (раньше при сбое
+        # после открытия окна запрос в GNS3 вообще не отправлялся).
+        self.on_submit = on_submit
+        # Имя образа в заголовке — чтобы всегда было видно, для какого образа создаётся шаблон.
+        self.title(f"Создать шаблон QEMU в GNS3 — {Path(image_path).name}")
         self.geometry("700x600")
         self.resizable(True, True)
         self.minsize(600, 500)
+        # Привязываем окно к главному: оконный менеджер открывает его на том же
+        # мониторе, что и главное окно, поверх него и разворачивает на весь экран.
+        try:
+            self.transient(parent)
+        except tk.TclError:
+            pass
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -1635,13 +1688,39 @@ class CreateTemplateDialog(tk.Toplevel):
 
         btn_frame = ttk.Frame(self)
         btn_frame.pack(pady=(0, 10))
-        ttk.Button(btn_frame, text="Создать", command=self.create).pack(side=tk.LEFT, padx=5)
+        create_btn = ttk.Button(btn_frame, text="Создать", command=self.create)
+        create_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=self.destroy).pack(side=tk.LEFT, padx=5)
+        # Enter в окне создания = «Создать» (как в обычных диалогах)
+        self.bind("<Return>", lambda event: self.create())
         self.hda_var.set(image_path)
 
-        self.grab_set()
+        self._grab_ok = False
+        self._try_set_grab()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         maximize_window(self)
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def _try_set_grab(self):
+        """Устанавливает модальность; при неудаче повторяет после появления окна.
+
+        В Tk/X11 `grab_set()` до отображения окна может завершиться ошибкой
+        «grab failed: window not viewable». Если это не перехватить, исключение
+        прерывало открытие окна и создание шаблона не происходило.
+        """
+        try:
+            self.grab_set()
+            self._grab_ok = True
+        except tk.TclError as e:
+            log_event(f"grab_set не удался ({e}), повторю после отображения окна")
+            try:
+                self.after(200, self._try_set_grab)
+            except tk.TclError:
+                pass
 
     def _create_basic_tab(self, parent):
         frame = ttk.Frame(parent, padding=10)
@@ -1793,22 +1872,44 @@ class CreateTemplateDialog(tk.Toplevel):
         ttk.Label(frame, text="(позволяет запускать несколько копий одного образа)", foreground="gray").grid(row=r, column=1, sticky="w", padx=5, pady=0)
 
     def create(self):
-        if not self.name_var.get().strip(): ErrorDialog(self, "Ошибка", "Введите имя шаблона."); return
-        if not self.hda_var.get().strip(): ErrorDialog(self, "Ошибка", "Укажите HDA диск."); return
-        if not self.qemu_var.get().strip(): ErrorDialog(self, "Ошибка", "Укажите путь к QEMU."); return
-        self.result = {
-            "name": self.name_var.get().strip(), "ram": self.ram_var.get(), "cpus": self.cpu_var.get(),
-            "qemu_path": self.qemu_var.get().strip(), "hda_disk_image": self.hda_var.get().strip(),
-            "hdb_disk_image": self.hdb_var.get().strip(), "cdrom_image": self._selected_cdrom_path(),
-            "boot_priority": self.boot_var.get(), "platform": self.platform_var.get(),
-            "console_type": self.console_var.get(), "adapters": self.adapters_var.get(),
-            "adapter_type": self.adapter_type_var.get(), "mac_address": self.mac_var.get().strip(),
-            "options": self.options_text.get("1.0", tk.END).strip(), "linked_clone": self.linked_clone_var.get(),
-            "symbol": self.symbol_var.get().strip(), "category": self.category_var.get().strip(),
-            "hda_disk_interface": self.hda_iface_var.get(),
-            "hdb_disk_interface": self.hdb_iface_var.get() if self.hdb_var.get().strip() else ""
-        }
+        """Собирает параметры и закрывает окно (создание выполняет главное окно)."""
+        try:
+            if not self.name_var.get().strip():
+                ErrorDialog(self, "Ошибка", "Введите имя шаблона.")
+                return
+            if not self.hda_var.get().strip():
+                ErrorDialog(self, "Ошибка", "Укажите HDA диск.")
+                return
+            if not self.qemu_var.get().strip():
+                ErrorDialog(self, "Ошибка", "Укажите путь к QEMU.")
+                return
+            self.result = {
+                "name": self.name_var.get().strip(), "ram": self.ram_var.get(), "cpus": self.cpu_var.get(),
+                "qemu_path": self.qemu_var.get().strip(), "hda_disk_image": self.hda_var.get().strip(),
+                "hdb_disk_image": self.hdb_var.get().strip(), "cdrom_image": self._selected_cdrom_path(),
+                "boot_priority": self.boot_var.get(), "platform": self.platform_var.get(),
+                "console_type": self.console_var.get(), "adapters": self.adapters_var.get(),
+                "adapter_type": self.adapter_type_var.get(), "mac_address": self.mac_var.get().strip(),
+                "options": self.options_text.get("1.0", tk.END).strip(), "linked_clone": self.linked_clone_var.get(),
+                "symbol": self.symbol_var.get().strip(), "category": self.category_var.get().strip(),
+                "hda_disk_interface": self.hda_iface_var.get(),
+                "hdb_disk_interface": self.hdb_iface_var.get() if self.hdb_var.get().strip() else ""
+            }
+        except tk.TclError as e:
+            log_event(f"ОШИБКА чтения полей окна создания: {e}")
+            ErrorDialog(self, "Ошибка", f"Не удалось прочитать параметры шаблона: {e}")
+            return
+        log_event(f"Нажата кнопка «Создать»: образ={self.image_path}, имя={self.result['name']!r}")
+        parent, callback, params = self.master, self.on_submit, self.result
         self.destroy()
+        # Создание выполняем сразу после закрытия окна, не полагаясь на то,
+        # что ожидающий поток доживёт до этого момента.
+        if callback is not None:
+            try:
+                callback(params)
+            except Exception:
+                log_event("ОШИБКА при создании шаблона:\n" + traceback.format_exc())
+                ErrorDialog(parent, "Ошибка", traceback.format_exc())
 
 # -------------------- Главное окно --------------------
 class GNS3ImageManager:
@@ -1969,18 +2070,48 @@ class GNS3ImageManager:
             self.status_var.set(f"Выбрано образ{suffix}: {count}")
 
     def _on_image_double_click(self, event):
-        """Открывает создание шаблона только при двойном щелчке по строке образа."""
-        if self.tree.identify_region(event.x, event.y) == "cell":
-            self.create_template_for_selected()
+        """Открывает создание шаблона для строки, по которой сделан двойной щелчок.
+
+        Важно: берём именно строку под курсором, а не текущее выделение. Выделение
+        успевает сброситься при обновлении списка (F5, фильтр, автообновление после
+        обращения к API) и может относиться к другому образу — тогда диалог
+        открывался для чужого образа, а для нажатого шаблон не создавался.
+        """
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        values = self.tree.item(item, "values")
+        if not values:
+            return
+        # Выравниваем выделение по нажатой строке, иначе кнопки «Создать шаблон»
+        # и «Удалить выбранные» продолжат относиться к прежней строке.
+        self.tree.selection_set(item)
+        self.tree.focus(item)
+        self._open_create_template_dialog(str(TARGET_DIR / values[0]))
 
     def create_template_for_selected(self):
+        """Создание шаблона для выделенного образа (кнопка «Создать шаблон»)."""
         selected = self.tree.selection()
         if len(selected) != 1:
             ErrorDialog(self.root, "Выбор образа", "Выберите один образ, для которого нужно создать шаблон.")
             return
         values = self.tree.item(selected[0], "values")
         if values:
-            self.create_template_for_image(str(TARGET_DIR / values[0]))
+            self._open_create_template_dialog(str(TARGET_DIR / values[0]))
+
+    def _open_create_template_dialog(self, image_path):
+        """Открывает диалог создания шаблона, не допуская двух окон одновременно."""
+        if getattr(self, "_template_dialog_open", False):
+            log_event(f"Диалог создания уже открыт — повторный вызов для {image_path} проигнорирован")
+            return
+        self._template_dialog_open = True
+        log_event(f"Открываю окно создания шаблона: {image_path}")
+        try:
+            self.create_template_for_image(image_path)
+        finally:
+            self._template_dialog_open = False
 
     def refresh_template_associations(self):
         """Загружает привязки образов к шаблонам одним запросом к API GNS3."""
@@ -2097,10 +2228,21 @@ class GNS3ImageManager:
             self.create_template_for_image(str(dest))
 
     def create_template_for_image(self, image_path):
-        dialog = CreateTemplateDialog(self.root, image_path, self.config)
-        self.root.wait_window(dialog)
-        if dialog.result is None: return
-        td = dialog.result
+        try:
+            dialog = CreateTemplateDialog(self.root, image_path, self.config,
+                                          on_submit=self._create_template_from_params)
+        except Exception:
+            log_event(f"ОШИБКА при открытии окна создания:\n{traceback.format_exc()}")
+            ErrorDialog(self.root, "Ошибка", traceback.format_exc())
+            return
+        try:
+            if dialog.winfo_exists():
+                self.root.wait_window(dialog)
+        except tk.TclError as e:
+            log_event(f"Ожидание закрытия окна прервано: {e}")
+
+    def _create_template_from_params(self, td):
+        """Отправляет параметры шаблона в GNS3 и показывает результат."""
         url = f"{self.config['gns3_host']}/v2/templates"
         payload = {
             "name": td["name"], "template_type": "qemu", "compute_id": "local",
@@ -2119,22 +2261,30 @@ class GNS3ImageManager:
                      "hdb_disk_interface"]:
             if key in payload and not payload[key]:
                 del payload[key]
+        log_event(f"POST {url} payload={payload}")
+        self.status_var.set(f"Создаю шаблон '{td['name']}'…")
         try:
             auth = self._auth()
             resp = requests.post(url, json=payload, auth=auth, timeout=10)
+            log_event(f"Ответ GNS3: HTTP {resp.status_code} {resp.text[:300]}")
             if resp.status_code == 201:
-                messagebox.showinfo("Шаблон создан", f"Шаблон '{td['name']}' создан.")
+                messagebox.showinfo("Шаблон создан", f"Шаблон '{td['name']}' создан.", parent=self.root)
                 self.status_var.set(f"Шаблон создан: {td['name']}")
                 self.update_api_status(True)
                 self.refresh_template_associations()
             else:
+                self.status_var.set(f"Ошибка создания шаблона: HTTP {resp.status_code}")
                 ErrorDialog(self.root, "Ошибка API", f"Код: {resp.status_code}\n{resp.text}")
                 self.update_api_status(False)
-        except requests.exceptions.ConnectionError:
-            ErrorDialog(self.root, "Ошибка", "Нет соединения с GNS3.")
+        except requests.exceptions.ConnectionError as e:
+            log_event(f"Нет соединения с GNS3: {e}")
+            self.status_var.set("Нет соединения с GNS3")
+            ErrorDialog(self.root, "Ошибка", f"Нет соединения с GNS3 ({url})\n{e}")
             self.update_api_status(False)
         except Exception as e:
-            ErrorDialog(self.root, "Ошибка", str(e))
+            log_event(f"Исключение при создании шаблона: {e!r}\n{traceback.format_exc()}")
+            self.status_var.set(f"Ошибка создания шаблона: {e}")
+            ErrorDialog(self.root, "Ошибка", traceback.format_exc())
             self.update_api_status(False)
 
     def _auth(self):
@@ -2352,8 +2502,94 @@ class GNS3ImageManager:
     def on_settings_updated(self):
         self.config = load_config(); self.status_var.set("Настройки сохранены."); self.check_api_silent()
 
+def set_wm_class(window, instance="gns3imagemanager", wm_class="GNS3ImageManager"):
+    """Задаёт WM_CLASS окна ровно как нужно (чтобы ярлык находил приложение).
+
+    Tk приводит переданный className к виду «Gns3imagemanager» (первая заглавная,
+    остальные строчные), поэтому ярлык с `StartupWMClass=GNS3ImageManager` окно не
+    находил. Здесь WM_CLASS выставляется напрямую через Xlib: окно на миг скрывается
+    (чтобы оконный менеджер прочитал класс уже при отображении), затем показывается.
+    Ошибки X игнорируются, а если libX11 недоступна — остаётся вариант от Tk,
+    приложение продолжает работать.
+    """
+    try:
+        import ctypes
+
+        x11 = ctypes.CDLL("libX11.so.6")
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XQueryTree.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                                   ctypes.POINTER(ctypes.c_ulong),
+                                   ctypes.POINTER(ctypes.c_ulong),
+                                   ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+                                   ctypes.POINTER(ctypes.c_uint)]
+        x11.XQueryTree.restype = ctypes.c_int
+        x11.XSetClassHint.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p]
+        x11.XSetClassHint.restype = ctypes.c_int
+        x11.XFree.argtypes = [ctypes.c_void_p]
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+
+        # Свой обработчик ошибок X здесь ставить нельзя: XSetErrorHandler глобальный
+        # и перетирает обработчик Tk (проверено — приложение падало).
+        window.withdraw()                 # окно создаётся, но ещё не отображается
+        window.update_idletasks()
+        display = x11.XOpenDisplay(None)
+        if not display:
+            return False
+        try:
+            inner = window.winfo_id()
+            root_ret = ctypes.c_ulong()
+            parent_ret = ctypes.c_ulong()
+            children = ctypes.POINTER(ctypes.c_ulong)()
+            n_children = ctypes.c_uint()
+            # WM читает WM_CLASS у окна верхнего уровня — у Tk это окно-обёртка,
+            # родитель внутреннего окна.
+            ok = x11.XQueryTree(ctypes.c_void_p(display), ctypes.c_ulong(inner),
+                                ctypes.byref(root_ret), ctypes.byref(parent_ret),
+                                ctypes.byref(children), ctypes.byref(n_children))
+            if children:
+                x11.XFree(ctypes.cast(children, ctypes.c_void_p))
+            target = parent_ret.value or inner
+            if not ok or not target:
+                return False
+
+            class XClassHint(ctypes.Structure):
+                _fields_ = [("res_name", ctypes.c_char_p), ("res_class", ctypes.c_char_p)]
+
+            hint = XClassHint(instance.encode(), wm_class.encode())
+            x11.XSetClassHint(ctypes.c_void_p(display), ctypes.c_ulong(target),
+                              ctypes.byref(hint))
+            x11.XFlush(ctypes.c_void_p(display))
+        finally:
+            x11.XCloseDisplay(ctypes.c_void_p(display))
+        window.deiconify()
+        window.update_idletasks()
+        log_event(f"WM_CLASS установлен: {instance} / {wm_class}")
+        return True
+    except Exception as e:
+        log_event(f"Не удалось установить WM_CLASS через Xlib ({e!r}), остаётся вариант Tk")
+        try:
+            window.deiconify()
+        except tk.TclError:
+            pass
+        return False
+
+
 def main():
-    root = tk.Tk()
+    # Путь к AppImage (переменную задаёт сам AppImage) — сразу видно, какая сборка запущена.
+    appimage = os.environ.get("APPIMAGE") or sys.argv[0]
+    log_event(f"=== Запуск GNS3 Image Manager: {appimage} | frozen={getattr(sys, 'frozen', False)} | Python {sys.version.split()[0]} ===")
+    # baseName/className задают WM_CLASS окна: по нему оконный менеджер и ярлык
+    # (.desktop с StartupWMClass=GNS3ImageManager) сопоставляют окно с приложением.
+    root = tk.Tk(baseName="gns3imagemanager", className="GNS3ImageManager")
+    set_wm_class(root)
+
+    def _log_callback_exception(exc, val, tb):
+        """Все необработанные исключения Tk пишем в журнал: в AppImage stderr не виден."""
+        log_event("НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ:\n" + "".join(traceback.format_exception(exc, val, tb)))
+
+    root.report_callback_exception = _log_callback_exception
     try:
         if getattr(sys, 'frozen', False):
             icon_path = os.path.join(sys._MEIPASS, "icon.png")
